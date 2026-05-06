@@ -81,11 +81,10 @@ func (vc *V2Core) GetUserTrafficSlice(tag string, mintraffic int) ([]panel.UserT
 		c.Counters.Range(func(key, value interface{}) bool {
 			email := key.(string)
 			traffic := value.(*counter.TrafficStorage)
-			up := traffic.UpCounter.Load()
-			down := traffic.DownCounter.Load()
+			// Use atomic Swap to read and zero in one operation
+			up := traffic.UpCounter.Swap(0)
+			down := traffic.DownCounter.Swap(0)
 			if up+down > int64(mintraffic*1000) {
-				traffic.UpCounter.Store(0)
-				traffic.DownCounter.Store(0)
 				if vc.users.uidMap[email] == 0 {
 					c.Delete(email)
 					return true
@@ -104,6 +103,29 @@ func (vc *V2Core) GetUserTrafficSlice(tag string, mintraffic int) ([]panel.UserT
 		return trafficSlice, nil
 	}
 	return nil, nil
+}
+
+// AddBackTraffic adds unreported traffic back to the counters.
+// This is called when ReportUserTraffic fails (e.g. panel offline)
+// so the traffic data is not lost and will be reported in the next cycle.
+func (vc *V2Core) AddBackTraffic(tag string, traffic []panel.UserTraffic) {
+	if v, ok := vc.dispatcher.Counter.Load(tag); ok {
+		c := v.(*counter.TrafficCounter)
+		vc.users.mapLock.RLock()
+		defer vc.users.mapLock.RUnlock()
+		// Build reverse map: UID -> email
+		uidToEmail := make(map[int]string, len(vc.users.uidMap))
+		for email, uid := range vc.users.uidMap {
+			uidToEmail[uid] = email
+		}
+		for _, t := range traffic {
+			if email, ok := uidToEmail[t.UID]; ok {
+				ts := c.GetCounter(email)
+				ts.UpCounter.Add(t.Upload)
+				ts.DownCounter.Add(t.Download)
+			}
+		}
+	}
 }
 
 func (v *V2Core) AddUsers(p *AddUsersParams) (added int, err error) {

@@ -67,15 +67,7 @@ func (t *Task) ExecuteWithTimeout() error {
 
 	select {
 	case <-ctx.Done():
-		log.Errorf("Task %s execution timed out, reloading", t.Name)
-		if t.ReloadCh != nil {
-			select {
-			case t.ReloadCh <- struct{}{}:
-			default:
-			}
-		} else {
-			log.Panic("Reload failed")
-		}
+		log.Warnf("Task %s execution timed out, will retry next cycle", t.Name)
 		return nil
 	case err := <-done:
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

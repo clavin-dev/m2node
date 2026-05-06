@@ -64,17 +64,63 @@ func (c *Controller) nodeInfoMonitor(ctx context.Context) (err error) {
 	if newN != nil {
 		log.WithFields(log.Fields{
 			"tag": c.tag,
-		}).Error("Got new node info, reload")
-		if c.server.ReloadCh != nil {
-			select {
-			case c.server.ReloadCh <- struct{}{}:
-			default:
+		}).Info("Node info changed, updating inbound in-place")
+		// In-place update: remove old inbound, add new one, re-add users
+		// This avoids destroying the entire Xray Core and killing all connections
+		err = c.server.DelNode(c.tag)
+		if err != nil {
+			log.WithFields(log.Fields{
+				"tag": c.tag,
+				"err": err,
+			}).Error("Failed to remove old inbound during update, triggering reload")
+			if c.server.ReloadCh != nil {
+				select {
+				case c.server.ReloadCh <- struct{}{}:
+				default:
+				}
 			}
-		} else {
-			log.Panic("Reload failed")
+			return nil
 		}
+		err = c.server.AddNode(c.tag, newN)
+		if err != nil {
+			log.WithFields(log.Fields{
+				"tag": c.tag,
+				"err": err,
+			}).Error("Failed to add new inbound during update, triggering reload")
+			if c.server.ReloadCh != nil {
+				select {
+				case c.server.ReloadCh <- struct{}{}:
+				default:
+				}
+			}
+			return nil
+		}
+		// Re-add all current users to the new inbound
+		if len(c.userList) > 0 {
+			_, err = c.server.AddUsers(&vCore.AddUsersParams{
+				Tag:      c.tag,
+				NodeInfo: newN,
+				Users:    c.userList,
+			})
+			if err != nil {
+				log.WithFields(log.Fields{
+					"tag": c.tag,
+					"err": err,
+				}).Error("Failed to re-add users during update, triggering reload")
+				if c.server.ReloadCh != nil {
+					select {
+					case c.server.ReloadCh <- struct{}{}:
+					default:
+					}
+				}
+				return nil
+			}
+		}
+		c.info = newN
+		log.WithField("tag", c.tag).Info("Node inbound updated successfully without restart")
+	} else {
+		log.WithField("tag", c.tag).Debug("Node info no change")
 	}
-	log.WithField("tag", c.tag).Debug("Node info no change")
 
 	// get user info
 	newU, err := c.apiClient.GetUserList(ctx)
@@ -103,7 +149,7 @@ func (c *Controller) nodeInfoMonitor(ctx context.Context) (err error) {
 
 	// update alive list
 	if newA != nil {
-		c.limiter.AliveList = newA
+		c.limiter.UpdateAliveList(newA)
 	}
 	// node no changed, check users
 	if len(newU) == 0 {

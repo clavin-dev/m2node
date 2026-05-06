@@ -26,7 +26,7 @@ type Limiter struct {
 	UUIDtoUID     map[string]int // Key: UUID, value: Uid
 	UserLimitInfo *sync.Map      // Key: TagUUID value: UserLimitInfo
 	SpeedLimiter  *sync.Map      // key: TagUUID, value: *DynamicBucket
-	AliveList     map[int]int    // Key: Uid, value: alive_ip
+	AliveList     *sync.Map      // Key: Uid(int), value: alive_ip(int) — concurrent-safe
 }
 
 type UserLimitInfo struct {
@@ -44,8 +44,11 @@ func AddLimiter(nodetype string, tag string, users []panel.UserInfo, aliveList m
 		UserOnlineIP:  new(sync.Map),
 		UserLimitInfo: new(sync.Map),
 		SpeedLimiter:  new(sync.Map),
-		AliveList:     aliveList,
 		OldUserOnline: new(sync.Map),
+		AliveList:     new(sync.Map),
+	}
+	for k, v := range aliveList {
+		l.AliveList.Store(k, v)
 	}
 	uuidmap := make(map[string]int)
 	for i := range users {
@@ -84,13 +87,30 @@ func DeleteLimiter(tag string) {
 	limitLock.Unlock()
 }
 
+// UpdateAliveList replaces the alive list with new data from the panel (concurrent-safe).
+func (l *Limiter) UpdateAliveList(newAlive map[int]int) {
+	fresh := new(sync.Map)
+	for k, v := range newAlive {
+		fresh.Store(k, v)
+	}
+	l.AliveList = fresh
+}
+
+// getAliveIp returns the alive IP count for a user (concurrent-safe).
+func (l *Limiter) getAliveIp(uid int) int {
+	if v, ok := l.AliveList.Load(uid); ok {
+		return v.(int)
+	}
+	return 0
+}
+
 func (l *Limiter) UpdateUser(tag string, added []panel.UserInfo, deleted []panel.UserInfo, modified []panel.UserInfo) {
 	for i := range deleted {
 		l.UserLimitInfo.Delete(format.UserTag(tag, deleted[i].Uuid))
 		l.UserOnlineIP.Delete(format.UserTag(tag, deleted[i].Uuid))
 		l.SpeedLimiter.Delete(format.UserTag(tag, deleted[i].Uuid))
 		delete(l.UUIDtoUID, deleted[i].Uuid)
-		delete(l.AliveList, deleted[i].Id)
+		l.AliveList.Delete(deleted[i].Id)
 	}
 	for i := range modified {
 		if v, ok := l.UserLimitInfo.Load(format.UserTag(tag, modified[i].Uuid)); ok {
@@ -171,7 +191,7 @@ func (l *Limiter) CheckLimit(taguuid string, ip string, noUDPsource bool) (Dynam
 		// Store online user for device limit
 		newipMap := new(sync.Map)
 		newipMap.Store(ip, uid)
-		aliveIp := l.AliveList[uid]
+		aliveIp := l.getAliveIp(uid)
 		// If any device is online
 		if v, loaded := l.UserOnlineIP.LoadOrStore(taguuid, newipMap); loaded {
 			oldipMap := v.(*sync.Map)
@@ -218,18 +238,29 @@ func (l *Limiter) CheckLimit(taguuid string, ip string, noUDPsource bool) (Dynam
 
 func (l *Limiter) GetOnlineDevice() (*[]panel.OnlineUser, error) {
 	var onlineUser []panel.OnlineUser
-	l.OldUserOnline = new(sync.Map)
+
+	// Build new OldUserOnline FIRST, before clearing UserOnlineIP.
+	// This eliminates the race window where CheckLimit can't find
+	// a legitimate IP in either map, causing spurious rejections.
+	newOld := new(sync.Map)
 	l.UserOnlineIP.Range(func(key, value interface{}) bool {
-		taguuid := key.(string)
 		ipMap := value.(*sync.Map)
 		ipMap.Range(func(key, value interface{}) bool {
 			uid := value.(int)
 			ip := key.(string)
-			l.OldUserOnline.Store(ip, uid)
+			newOld.Store(ip, uid)
 			onlineUser = append(onlineUser, panel.OnlineUser{UID: uid, IP: ip})
 			return true
 		})
-		l.UserOnlineIP.Delete(taguuid) // Reset online device
+		return true
+	})
+
+	// Atomically swap OldUserOnline, then clear UserOnlineIP.
+	// Now CheckLimit will always find the IP in OldUserOnline even
+	// if UserOnlineIP was just cleared.
+	l.OldUserOnline = newOld
+	l.UserOnlineIP.Range(func(key, _ interface{}) bool {
+		l.UserOnlineIP.Delete(key)
 		return true
 	})
 
@@ -240,3 +271,4 @@ type UserIpList struct {
 	Uid    int      `json:"Uid"`
 	IpList []string `json:"Ips"`
 }
+

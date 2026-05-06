@@ -22,7 +22,9 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 			log.WithFields(log.Fields{
 				"tag": c.tag,
 				"err": err,
-			}).Info("Report user traffic failed")
+			}).Info("Report user traffic failed, adding traffic back to counters")
+			// Add unreported traffic back so it's not lost
+			c.server.AddBackTraffic(c.tag, userTraffic)
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return err
 			}
