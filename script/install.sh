@@ -266,15 +266,6 @@ install_v2node() {
     mkdir /usr/local/v2node/ -p
     cd /usr/local/v2node/
 
-    # Map arch to binary name
-    if [[ "$arch" == "64" ]]; then
-        bin_arch="amd64"
-    elif [[ "$arch" == "arm64-v8a" ]]; then
-        bin_arch="arm64"
-    else
-        bin_arch="amd64"
-    fi
-
     if  [[ -z "$version_param" ]] ; then
         last_version=$(curl -Ls "https://api.github.com/repos/clavin-dev/v2node/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
         if [[ ! -n "$last_version" ]]; then
@@ -282,24 +273,29 @@ install_v2node() {
             exit 1
         fi
         echo -e "${green}检测到最新版本：${last_version}，开始安装...${plain}"
-        url="https://github.com/clavin-dev/v2node/releases/download/${last_version}/v2node-linux-${bin_arch}"
-        curl -sL "$url" | pv -s 80M -W -N "下载进度" > /usr/local/v2node/v2node
+        url="https://github.com/clavin-dev/v2node/releases/download/${last_version}/v2node-linux-${arch}.zip"
+        curl -sL "$url" | pv -s 30M -W -N "下载进度" > /usr/local/v2node/v2node-linux.zip
         if [[ $? -ne 0 ]]; then
             echo -e "${red}下载 v2node 失败，请确保你的服务器能够下载 Github 的文件${plain}"
             exit 1
         fi
     else
     last_version=$version_param
-        url="https://github.com/clavin-dev/v2node/releases/download/${last_version}/v2node-linux-${bin_arch}"
-        curl -sL "$url" | pv -s 80M -W -N "下载进度" > /usr/local/v2node/v2node
+        url="https://github.com/clavin-dev/v2node/releases/download/${last_version}/v2node-linux-${arch}.zip"
+        curl -sL "$url" | pv -s 30M -W -N "下载进度" > /usr/local/v2node/v2node-linux.zip
         if [[ $? -ne 0 ]]; then
             echo -e "${red}下载 v2node $1 失败，请确保此版本存在${plain}"
             exit 1
         fi
     fi
 
+    unzip v2node-linux.zip
+    rm v2node-linux.zip -f
+
     chmod +x v2node
     mkdir /etc/v2node/ -p
+    cp geoip.dat /etc/v2node/
+    cp geosite.dat /etc/v2node/
     if [[ x"${release}" == x"alpine" ]]; then
         rm /etc/init.d/v2node -f
         cat <<EOF > /etc/init.d/v2node
