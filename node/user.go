@@ -30,16 +30,23 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 			}
 		} else {
 			log.WithField("tag", c.tag).Infof("Report %d users traffic", len(userTraffic))
-			//log.WithField("tag", c.tag).Debugf("User traffic: %+v", userTraffic)
 		}
+	} else {
+		log.WithField("tag", c.tag).Debug("No user traffic to report")
 	}
 
-	if onlineDevice, err := c.limiter.GetOnlineDevice(); err != nil {
+	onlineDevice, err := c.limiter.GetOnlineDevice()
+	if err != nil {
 		log.WithFields(log.Fields{
 			"tag": c.tag,
 			"err": err,
 		}).Info("Get online device failed")
-	} else if len(*onlineDevice) > 0 {
+		return nil
+	}
+
+	log.WithField("tag", c.tag).Infof("Traffic: %d users, Online: %d devices", len(userTraffic), len(*onlineDevice))
+
+	if len(*onlineDevice) > 0 {
 		var result []panel.OnlineUser
 		var nocountUID = make(map[int]struct{})
 		for _, traffic := range userTraffic {
