@@ -18,3 +18,5 @@ new.sh
 quick_update.sh
 v2node-linux-amd64
 v2node-linux-arm64
+build_amd64/
+build_arm64/
