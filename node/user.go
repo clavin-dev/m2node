@@ -44,7 +44,7 @@ func (c *Controller) reportUserTrafficTask(ctx context.Context) (err error) {
 		return nil
 	}
 
-	log.WithField("tag", c.tag).Infof("Traffic: %d users, Online: %d devices", len(userTraffic), len(*onlineDevice))
+	log.WithField("tag", c.tag).Debugf("Traffic: %d users, Online: %d devices", len(userTraffic), len(*onlineDevice))
 
 	if len(*onlineDevice) > 0 {
 		var result []panel.OnlineUser

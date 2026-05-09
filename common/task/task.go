@@ -59,11 +59,13 @@ func (t *Task) executeTask() {
 	// Guard: if a leaked goroutine from a previous timeout is still
 	// running Execute, skip this cycle to prevent pile-up.
 	if !t.executing.CompareAndSwap(0, 1) {
-		log.Warnf("Task %s previous execution still running, skipping this cycle", t.Name)
+		log.Infof("Task %s previous execution still running, skipping this cycle", t.Name)
 		return
 	}
 
-	timeout := min(5*t.Interval, 5*time.Minute)
+	// 2*Interval is enough: resty has 15s timeout + 1 retry = 30s per HTTP call.
+	// Cap at 2 minutes so stuck connections are killed quickly.
+	timeout := min(2*t.Interval, 2*time.Minute)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 
 	// Store cancel so Close() can abort a stuck task
