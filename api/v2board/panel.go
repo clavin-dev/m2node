@@ -3,7 +3,6 @@ package panel
 import (
 	"errors"
 	"fmt"
-	"net/http"
 	"strconv"
 	"time"
 
@@ -29,13 +28,6 @@ type Client struct {
 
 func New(c *conf.NodeConfig) (*Client, error) {
 	client := resty.New()
-	// Force fresh connections: prevents reusing Cloudflare RST'd
-	// connections that cause HTTP calls to hang indefinitely.
-	client.SetTransport(&http.Transport{
-		DisableKeepAlives:   true,
-		TLSHandshakeTimeout: 10 * time.Second,
-		IdleConnTimeout:     30 * time.Second,
-	})
 	retryCount := conf.DefaultNodeRetryCount
 	if c.RetryCount != nil {
 		retryCount = *c.RetryCount
