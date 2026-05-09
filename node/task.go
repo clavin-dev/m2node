@@ -14,14 +14,14 @@ import (
 func (c *Controller) startTasks(node *panel.NodeInfo) {
 	// fetch node info task
 	c.nodeInfoMonitorPeriodic = &task.Task{
-		Name:     "nodeInfoMonitor",
+		Name:     "nodeInfoMonitor[" + c.tag + "]",
 		Interval: node.PullInterval,
 		Execute:  c.nodeInfoMonitor,
 		ReloadCh: c.server.ReloadCh,
 	}
 	// fetch user list task
 	c.userReportPeriodic = &task.Task{
-		Name:     "reportUserTrafficTask",
+		Name:     "reportUserTrafficTask[" + c.tag + "]",
 		Interval: node.PushInterval,
 		Execute:  c.reportUserTrafficTask,
 		ReloadCh: c.server.ReloadCh,
