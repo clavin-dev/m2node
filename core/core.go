@@ -37,16 +37,13 @@ type V2Core struct {
 }
 
 type UserMap struct {
-	uidMap  map[string]int
-	mapLock sync.RWMutex
+	uidMap sync.Map // email -> UID (int)
 }
 
 func New(config *conf.Conf) *V2Core {
 	core := &V2Core{
 		Config: config,
-		users: &UserMap{
-			uidMap: make(map[string]int),
-		},
+		users: &UserMap{},
 	}
 	return core
 }
