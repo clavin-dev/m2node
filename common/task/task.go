@@ -19,7 +19,7 @@ type Task struct {
 	ReloadCh chan struct{}
 	Stop     chan struct{}
 
-	executing atomic.Int32 // guard against goroutine pile-up
+	executing atomic.Int32    // guard: 1 = a goroutine is running Execute
 	cancel    context.CancelFunc
 }
 
@@ -56,8 +56,8 @@ func (t *Task) Start(first bool) error {
 }
 
 func (t *Task) executeTask() {
-	// Prevent goroutine pile-up: if the previous execution is still
-	// running (leaked goroutine from a timeout), skip this cycle entirely.
+	// Guard: if a leaked goroutine from a previous timeout is still
+	// running Execute, skip this cycle to prevent pile-up.
 	if !t.executing.CompareAndSwap(0, 1) {
 		log.Warnf("Task %s previous execution still running, skipping this cycle", t.Name)
 		return
@@ -71,19 +71,39 @@ func (t *Task) executeTask() {
 	t.cancel = cancel
 	t.Access.Unlock()
 
-	// Run synchronously — context timeout handles HTTP call cancellation.
-	// This eliminates the goroutine leak entirely: no orphaned goroutines
-	// can accumulate and create mapLock write-starvation deadlocks.
-	err := t.Execute(ctx)
-	cancel()
-	t.executing.Store(0)
+	done := make(chan error, 1)
+	go func() {
+		done <- t.Execute(ctx)
+	}()
 
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			log.Warnf("Task %s execution timed out, will retry next cycle", t.Name)
-			return
+	select {
+	case err := <-done:
+		// Goroutine completed within timeout — release guard
+		cancel()
+		t.executing.Store(0)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				log.Warnf("Task %s context cancelled, will retry next cycle", t.Name)
+				return
+			}
+			log.Errorf("Task %s execution error: %v", t.Name, err)
 		}
-		log.Errorf("Task %s execution error: %v", t.Name, err)
+
+	case <-ctx.Done():
+		// Timeout: cancel the context so the goroutine's HTTP calls abort.
+		// Do NOT reset executing to 0 — the guard stays at 1 so that
+		// the next cycle skips (via CompareAndSwap above) instead of
+		// spawning another goroutine. The leaked goroutine will eventually
+		// return and reset the guard via the deferred cleanup below.
+		cancel()
+		log.Warnf("Task %s execution timed out, will retry next cycle", t.Name)
+
+		// Spawn a tiny cleanup goroutine to wait for the leaked one and
+		// release the guard, so future cycles can run again.
+		go func() {
+			<-done
+			t.executing.Store(0)
+		}()
 	}
 }
 
