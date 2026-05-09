@@ -206,7 +206,10 @@ func (d *DefaultDispatcher) getLink(ctx context.Context) (*transport.Link, *tran
 		}
 		lm.AddLink(managedWriter, outboundLink.Reader)
 		inboundLink.Writer = managedWriter
+		// Enable kernel splice/zero-copy by default for maximum throughput
+		sessionInbound.CanSpliceCopy = 1
 		if w != nil {
+			// Rate limiting requires userspace data access, disable splice
 			sessionInbound.CanSpliceCopy = 3
 			inboundLink.Writer = rate.NewRateLimitWriter(inboundLink.Writer, w)
 			outboundLink.Writer = rate.NewRateLimitWriter(outboundLink.Writer, w)
@@ -387,7 +390,10 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 			manager: lm,
 		}
 		outbound.Writer = managedWriter
+		// Enable kernel splice/zero-copy by default for maximum throughput
+		sessionInbound.CanSpliceCopy = 1
 		if w != nil {
+			// Rate limiting requires userspace data access, disable splice
 			sessionInbound.CanSpliceCopy = 3
 			outbound.Writer = rate.NewRateLimitWriter(outbound.Writer, w)
 		}
