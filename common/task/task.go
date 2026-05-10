@@ -93,19 +93,13 @@ func (t *Task) executeTask() {
 
 	case <-ctx.Done():
 		// Timeout: cancel the context so the goroutine's HTTP calls abort.
-		// Do NOT reset executing to 0 — the guard stays at 1 so that
-		// the next cycle skips (via CompareAndSwap above) instead of
-		// spawning another goroutine. The leaked goroutine will eventually
-		// return and reset the guard via the deferred cleanup below.
+		// Immediately reset the guard so the next cycle can spawn a fresh
+		// execution. The old goroutine may leak if it ignores context
+		// cancellation (e.g. stuck TLS handshake), but it holds minimal
+		// memory and will eventually be collected when the process exits.
 		cancel()
+		t.executing.Store(0)
 		log.Warnf("Task %s execution timed out, will retry next cycle", t.Name)
-
-		// Spawn a tiny cleanup goroutine to wait for the leaked one and
-		// release the guard, so future cycles can run again.
-		go func() {
-			<-done
-			t.executing.Store(0)
-		}()
 	}
 }
 
