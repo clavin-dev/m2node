@@ -12,8 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"log"
+	"sync"
+
 	panel "github.com/wyx2685/v2node/api/v2board"
 	"github.com/wyx2685/v2node/common/shadowflow"
+	"github.com/wyx2685/v2node/common/snirouter"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/inbound"
@@ -24,6 +28,12 @@ import (
 type NetworkSettingsProxyProtocol struct {
 	AcceptProxyProtocol bool `json:"acceptProxyProtocol"`
 }
+
+// activeSNIRouters tracks running SNI routers so we can shut them down on node reload.
+var (
+	sniRouterMu      sync.Mutex
+	activeSNIRouters = make(map[string]*snirouter.Router) // key = node tag
+)
 
 func (v *V2Core) removeInbound(tag string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -153,15 +163,58 @@ func buildInbound(nodeInfo *panel.NodeInfo, tag string) (*core.InboundHandlerCon
 		v := nodeInfo.Common
 		serverNames := v.TlsSettings.EffectiveServerNames()
 		shortIds := v.TlsSettings.EffectiveShortIds()
-		dest := v.TlsSettings.Dest
-		if dest == "" {
-			dest = v.TlsSettings.PrimaryServerName()
+		serverPort := v.TlsSettings.ServerPort
+		if serverPort == "" {
+			serverPort = "443"
 		}
 		xver := v.TlsSettings.Xver
-		d, err := json.Marshal(fmt.Sprintf(
-			"%s:%s",
-			dest,
-			v.TlsSettings.ServerPort))
+
+		// Determine dest: if multiple SNIs, start a local SNI router
+		// so each probe is forwarded to the correct upstream.
+		var destAddr string
+		if len(serverNames) > 1 {
+			// Shut down any previous router for this tag
+			sniRouterMu.Lock()
+			if old, ok := activeSNIRouters[tag]; ok {
+				old.Close()
+				delete(activeSNIRouters, tag)
+			}
+			sniRouterMu.Unlock()
+
+			sniMap := make(map[string]string, len(serverNames))
+			for _, sn := range serverNames {
+				sniMap[sn] = sn + ":" + serverPort
+			}
+			// If panel specified a dest, use it as the default fallback
+			defaultDest := v.TlsSettings.Dest
+			if defaultDest == "" {
+				defaultDest = serverNames[0]
+			}
+			if !strings.Contains(defaultDest, ":") {
+				defaultDest = defaultDest + ":" + serverPort
+			}
+
+			router := snirouter.New(sniMap, defaultDest)
+			if err := router.Start(); err != nil {
+				return nil, fmt.Errorf("start SNI router error: %w", err)
+			}
+
+			sniRouterMu.Lock()
+			activeSNIRouters[tag] = router
+			sniRouterMu.Unlock()
+
+			destAddr = router.Addr()
+			log.Printf("[Reality] multi-SNI router started at %s for %v", destAddr, serverNames)
+		} else {
+			// Single SNI — classic behavior
+			dest := v.TlsSettings.Dest
+			if dest == "" {
+				dest = v.TlsSettings.PrimaryServerName()
+			}
+			destAddr = fmt.Sprintf("%s:%s", dest, serverPort)
+		}
+
+		d, err := json.Marshal(destAddr)
 		if err != nil {
 			return nil, fmt.Errorf("marshal reality dest error: %s", err)
 		}
