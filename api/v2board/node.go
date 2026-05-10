@@ -234,6 +234,20 @@ func (t TlsSettings) EffectiveServerNames() []string {
 	if t.ServerName == "" {
 		return nil
 	}
+	// Support comma-separated SNI list from panel (e.g. "www.apple.com,www.microsoft.com")
+	if strings.Contains(t.ServerName, ",") {
+		parts := strings.Split(t.ServerName, ",")
+		var names []string
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				names = append(names, p)
+			}
+		}
+		if len(names) > 0 {
+			return names
+		}
+	}
 	return []string{t.ServerName}
 }
 
