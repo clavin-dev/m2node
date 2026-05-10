@@ -244,17 +244,21 @@ func (d *DefaultDispatcher) getLink(ctx context.Context) (*transport.Link, *tran
 		if cached, ok := d.CamouflageEngines.Load(sessionInbound.Tag); ok {
 			engine = cached.(*shadowflow.CamouflageEngine)
 		} else {
-			// Create engine with default config (panel config can override later)
-			engine = shadowflow.NewCamouflageEngine(&shadowflow.CamouflageConfig{
-				Profile: shadowflow.ChromeH2Profile,
-				Mode:    "random",
-			})
+			// Build engine from panel config if available
+			nodeConfig := shadowflow.GetNodeConfig(sessionInbound.Tag)
+			if nodeConfig != nil {
+				engine = shadowflow.BuildCamouflageEngine(nodeConfig)
+			} else {
+				// Fallback to defaults
+				engine = shadowflow.NewCamouflageEngine(&shadowflow.CamouflageConfig{
+					Profile: shadowflow.ChromeH2Profile,
+					Mode:    "random",
+				})
+			}
 			d.CamouflageEngines.Store(sessionInbound.Tag, engine)
 		}
 		// Disable splice — camouflage requires userspace data processing
-		if sessionInbound != nil {
-			sessionInbound.CanSpliceCopy = 3
-		}
+		sessionInbound.CanSpliceCopy = 3
 		// Wrap uplink (C→S) and downlink (S→C) writers with shaping
 		inboundLink.Writer = shadowflow.NewShapedBufWriter(inboundLink.Writer, engine, shadowflow.C2S)
 		outboundLink.Writer = shadowflow.NewShapedBufWriter(outboundLink.Writer, engine, shadowflow.S2C)

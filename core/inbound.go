@@ -13,6 +13,7 @@ import (
 	"time"
 
 	panel "github.com/wyx2685/v2node/api/v2board"
+	"github.com/wyx2685/v2node/common/shadowflow"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/inbound"
@@ -526,7 +527,7 @@ func buildAnyTLS(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourConfig
 // ShadowFlow uses VLESS as the underlying Xray protocol since its transport layer
 // (Reality/TLS + WS/gRPC/TCP) is fully compatible with the VLESS pipeline.
 // ShadowFlow-specific features (camouflage, shaping) are handled at the application layer
-// by the ShadowFlow Rust engine, which wraps the Xray inbound.
+// by the camouflage engine in the dispatcher pipeline.
 func buildShadowFlow(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourConfig) error {
 	v := nodeInfo.Common
 	// Use VLESS as the base protocol for ShadowFlow
@@ -540,6 +541,19 @@ func buildShadowFlow(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourCo
 		return fmt.Errorf("marshal shadowflow/vless config error: %s", err)
 	}
 	inbound.Settings = (*json.RawMessage)(&s)
+
+	// Store ShadowFlow panel config for the dispatcher's camouflage engine
+	sfConfig := shadowflow.ParseFromCommonNode(
+		v.Camouflage,
+		v.ShapingSettings,
+		v.SniMode,
+		v.SwitchIntervalMin,
+		v.SwitchIntervalMax,
+		v.UploadHost,
+		v.DownloadHost,
+	)
+	shadowflow.SetNodeConfig(nodeInfo.Tag, sfConfig)
+
 	if len(v.NetworkSettings) == 0 {
 		return nil
 	}
@@ -576,3 +590,4 @@ func buildShadowFlow(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourCo
 	}
 	return nil
 }
+

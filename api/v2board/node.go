@@ -62,8 +62,13 @@ type CommonNode struct {
 	ObfsPassword            string `json:"obfs_password"`
 	Ignore_Client_Bandwidth bool   `json:"ignore_client_bandwidth"`
 	//shadowflow
-	Camouflage      string          `json:"camouflage"`
-	ShapingSettings json.RawMessage `json:"shaping_settings"`
+	Camouflage       string          `json:"camouflage"`
+	ShapingSettings  json.RawMessage `json:"shaping_settings"`
+	SniMode          string          `json:"sni_mode"`
+	SwitchIntervalMin int            `json:"switch_interval_min"`
+	SwitchIntervalMax int            `json:"switch_interval_max"`
+	UploadHost       string          `json:"upload_host"`
+	DownloadHost     string          `json:"download_host"`
 }
 
 type Route struct {
