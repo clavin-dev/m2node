@@ -172,11 +172,128 @@ var (
 		MaxRecordPayload: 16384,
 	}
 
+	// ================================================================
+	// HIGH-BANDWIDTH PROFILES — for large traffic camouflage
+	// ================================================================
+
+	// VideoStreamProfile — Netflix/YouTube adaptive streaming over HTTP/2
+	// Captured from: Chrome → youtube.com 4K streaming, netflix.com
+	// Key characteristics:
+	//   - S→C: predominantly large chunks (video segments)
+	//   - Periodic small packets (heartbeat, buffer status)
+	//   - C→S: small requests (range requests, quality reports)
+	//   - Burst pattern: large chunk → small pause → large chunk
+	VideoStreamProfile = &TrafficProfile{
+		Name: "video_stream",
+		C2SSizes: []SizeRange{
+			{Min: 26, Max: 80, Weight: 35},     // Range requests, ACK, heartbeat
+			{Min: 81, Max: 300, Weight: 30},     // Quality change requests, analytics
+			{Min: 301, Max: 800, Weight: 20},    // Buffering status, DRM license
+			{Min: 801, Max: 2000, Weight: 10},   // Subtitle fetch, manifest update
+			{Min: 2001, Max: 5000, Weight: 5},   // Upload (watch history, telemetry)
+		},
+		S2CSizes: []SizeRange{
+			{Min: 26, Max: 100, Weight: 5},       // ACK, SETTINGS, WINDOW_UPDATE
+			{Min: 101, Max: 500, Weight: 5},      // HEADERS, small metadata
+			{Min: 501, Max: 4000, Weight: 5},     // Manifests, playlists (m3u8/mpd)
+			{Min: 4001, Max: 12000, Weight: 15},  // Medium video chunks
+			{Min: 12001, Max: 16384, Weight: 70}, // ★ Large video data (dominant)
+		},
+		C2SInitial: []InitialPacket{
+			{MinSize: 60, MaxSize: 120},  // H2 SETTINGS
+			{MinSize: 26, MaxSize: 50},   // WINDOW_UPDATE
+			{MinSize: 200, MaxSize: 600}, // First video manifest request
+			{MinSize: 26, MaxSize: 80},   // ACK
+		},
+		S2CInitial: []InitialPacket{
+			{MinSize: 80, MaxSize: 200},     // SETTINGS
+			{MinSize: 26, MaxSize: 50},      // WINDOW_UPDATE
+			{MinSize: 500, MaxSize: 3000},   // Manifest response
+			{MinSize: 12000, MaxSize: 16384}, // First video segment (big)
+		},
+		MinRecordPayload: 26,
+		MaxRecordPayload: 16384,
+	}
+
+	// CloudSyncProfile — iCloud/Google Drive/OneDrive sync
+	// Captured from: macOS iCloud sync, Google Drive large upload
+	// Key characteristics:
+	//   - Bidirectional large chunks (upload AND download)
+	//   - Periodic metadata exchanges (file lists, checksums)
+	//   - Very large sustained throughput is NORMAL for this profile
+	//   - Mix of small control + large data is expected
+	CloudSyncProfile = &TrafficProfile{
+		Name: "cloud_sync",
+		C2SSizes: []SizeRange{
+			{Min: 30, Max: 100, Weight: 10},     // Keepalive, ACK
+			{Min: 101, Max: 500, Weight: 10},    // Metadata, file info
+			{Min: 501, Max: 4000, Weight: 15},   // Small file uploads, checksums
+			{Min: 4001, Max: 12000, Weight: 25}, // Medium file chunks
+			{Min: 12001, Max: 16384, Weight: 40}, // ★ Large upload chunks (dominant)
+		},
+		S2CSizes: []SizeRange{
+			{Min: 30, Max: 100, Weight: 8},       // ACK, control
+			{Min: 101, Max: 500, Weight: 7},      // Metadata responses
+			{Min: 501, Max: 4000, Weight: 10},    // File list, delta info
+			{Min: 4001, Max: 12000, Weight: 25},  // Medium download chunks
+			{Min: 12001, Max: 16384, Weight: 50}, // ★ Large download chunks (dominant)
+		},
+		C2SInitial: []InitialPacket{
+			{MinSize: 60, MaxSize: 150},    // TLS setup
+			{MinSize: 30, MaxSize: 60},     // Control
+			{MinSize: 300, MaxSize: 1200},  // Auth + sync state
+			{MinSize: 100, MaxSize: 500},   // File list request
+		},
+		S2CInitial: []InitialPacket{
+			{MinSize: 80, MaxSize: 250},
+			{MinSize: 30, MaxSize: 60},
+			{MinSize: 200, MaxSize: 800},
+			{MinSize: 4000, MaxSize: 16384},
+		},
+		MinRecordPayload: 30,
+		MaxRecordPayload: 16384,
+	}
+
+	// CDNDistributionProfile — Cloudflare/Akamai CDN edge distribution
+	// Key: Mostly S→C, very large records, minimal C→S
+	// This profile justifies the highest possible sustained throughput
+	CDNDistributionProfile = &TrafficProfile{
+		Name: "cdn_distribution",
+		C2SSizes: []SizeRange{
+			{Min: 26, Max: 60, Weight: 50},      // Range requests, tiny
+			{Min: 61, Max: 300, Weight: 30},      // HEADERS, small requests
+			{Min: 301, Max: 1000, Weight: 15},    // Occasional POST
+			{Min: 1001, Max: 4000, Weight: 5},    // Rare large C→S
+		},
+		S2CSizes: []SizeRange{
+			{Min: 26, Max: 100, Weight: 3},        // ACK only
+			{Min: 101, Max: 1000, Weight: 2},      // Headers
+			{Min: 1001, Max: 8000, Weight: 5},     // Small assets
+			{Min: 8001, Max: 14000, Weight: 10},   // Medium assets
+			{Min: 14001, Max: 16384, Weight: 80},  // ★★ Massive data (CDN bulk)
+		},
+		C2SInitial: []InitialPacket{
+			{MinSize: 60, MaxSize: 100},
+			{MinSize: 26, MaxSize: 40},
+			{MinSize: 100, MaxSize: 400},
+		},
+		S2CInitial: []InitialPacket{
+			{MinSize: 80, MaxSize: 200},
+			{MinSize: 26, MaxSize: 40},
+			{MinSize: 14000, MaxSize: 16384}, // CDN immediately sends large data
+		},
+		MinRecordPayload: 26,
+		MaxRecordPayload: 16384,
+	}
+
 	// profileRegistry for lookup by name
 	profileRegistry = map[string]*TrafficProfile{
-		"chrome_h2": ChromeH2Profile,
-		"safari":    SafariProfile,
-		"firefox":   FirefoxProfile,
+		"chrome_h2":        ChromeH2Profile,
+		"safari":           SafariProfile,
+		"firefox":          FirefoxProfile,
+		"video_stream":     VideoStreamProfile,
+		"cloud_sync":       CloudSyncProfile,
+		"cdn_distribution": CDNDistributionProfile,
 	}
 	registryMu sync.RWMutex
 )
