@@ -604,6 +604,8 @@ func buildShadowFlow(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourCo
 		v.SwitchIntervalMax,
 		v.UploadHost,
 		v.DownloadHost,
+		v.PathPool,
+		v.ConnMaxLifetime,
 	)
 	shadowflow.SetNodeConfig(nodeInfo.Tag, sfConfig)
 
@@ -620,6 +622,10 @@ func buildShadowFlow(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourCo
 	}
 	t := coreConf.TransportProtocol(v.Network)
 	inbound.StreamSetting = &coreConf.StreamConfig{Network: &t}
+
+	// For ShadowFlow, override path settings to accept all paths.
+	// The path pool is stored in sfConfig; clients rotate through it.
+	// Server security comes from VLESS UUID authentication, not path matching.
 	switch v.Network {
 	case "tcp":
 		err := json.Unmarshal(v.NetworkSettings, &inbound.StreamSetting.TCPSettings)
@@ -627,20 +633,38 @@ func buildShadowFlow(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourCo
 			return fmt.Errorf("unmarshal tcp settings error: %s", err)
 		}
 	case "ws":
-		err := json.Unmarshal(v.NetworkSettings, &inbound.StreamSetting.WSSettings)
+		// Apply multi-path: set path to "/" to accept all incoming paths
+		multiPathSettings, err := shadowflow.WSMultiPathConfig(v.NetworkSettings)
+		if err != nil {
+			return fmt.Errorf("build ws multi-path settings error: %s", err)
+		}
+		err = json.Unmarshal(multiPathSettings, &inbound.StreamSetting.WSSettings)
 		if err != nil {
 			return fmt.Errorf("unmarshal ws settings error: %s", err)
 		}
+		log.Printf("[ShadowFlow] WS multi-path enabled — server accepts all paths")
 	case "grpc":
-		err := json.Unmarshal(v.NetworkSettings, &inbound.StreamSetting.GRPCSettings)
+		// Apply multi-service: empty serviceName accepts all
+		multiServiceSettings, err := shadowflow.GRPCMultiServiceConfig(v.NetworkSettings)
+		if err != nil {
+			return fmt.Errorf("build grpc multi-service settings error: %s", err)
+		}
+		err = json.Unmarshal(multiServiceSettings, &inbound.StreamSetting.GRPCSettings)
 		if err != nil {
 			return fmt.Errorf("unmarshal grpc settings error: %s", err)
 		}
+		log.Printf("[ShadowFlow] gRPC multi-service enabled — server accepts all service names")
 	case "httpupgrade":
-		err := json.Unmarshal(v.NetworkSettings, &inbound.StreamSetting.HTTPUPGRADESettings)
+		// Apply multi-path for HTTPUpgrade too
+		multiPathSettings, err := shadowflow.WSMultiPathConfig(v.NetworkSettings)
+		if err != nil {
+			return fmt.Errorf("build httpupgrade multi-path settings error: %s", err)
+		}
+		err = json.Unmarshal(multiPathSettings, &inbound.StreamSetting.HTTPUPGRADESettings)
 		if err != nil {
 			return fmt.Errorf("unmarshal httpupgrade settings error: %s", err)
 		}
+		log.Printf("[ShadowFlow] HTTPUpgrade multi-path enabled")
 	case "splithttp", "xhttp":
 		err := json.Unmarshal(v.NetworkSettings, &inbound.StreamSetting.SplitHTTPSettings)
 		if err != nil {

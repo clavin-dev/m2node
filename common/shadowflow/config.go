@@ -37,6 +37,13 @@ type NodeConfig struct {
 	// CDN domain pools (newline-separated)
 	UploadHost   string `json:"upload_host"`
 	DownloadHost string `json:"download_host"`
+
+	// Path pool for transport-level path rotation (newline-separated)
+	PathPool string `json:"path_pool"`
+
+	// Connection max lifetime in seconds (0 = no limit).
+	// When set, connections are cycled periodically to switch paths.
+	ConnMaxLifetime int `json:"conn_max_lifetime"`
 }
 
 // ShapingConfig is the parsed shaping_settings JSON from the panel.
@@ -96,7 +103,8 @@ func DeleteNodeConfig(tag string) {
 // This is called during node info parsing.
 func ParseFromCommonNode(camouflage string, shapingSettingsRaw json.RawMessage,
 	sniMode string, switchMin, switchMax int,
-	uploadHost, downloadHost string) *NodeConfig {
+	uploadHost, downloadHost string,
+	pathPool string, connMaxLifetime int) *NodeConfig {
 
 	config := &NodeConfig{
 		Camouflage:        camouflage,
@@ -105,6 +113,8 @@ func ParseFromCommonNode(camouflage string, shapingSettingsRaw json.RawMessage,
 		SwitchIntervalMax: switchMax,
 		UploadHost:        uploadHost,
 		DownloadHost:      downloadHost,
+		PathPool:          pathPool,
+		ConnMaxLifetime:   connMaxLifetime,
 	}
 
 	// Defaults
