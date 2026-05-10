@@ -66,6 +66,8 @@ func buildInbound(nodeInfo *panel.NodeInfo, tag string) (*core.InboundHandlerCon
 		err = buildTuic(nodeInfo, in)
 	case "anytls":
 		err = buildAnyTLS(nodeInfo, in)
+	case "shadowflow":
+		err = buildShadowFlow(nodeInfo, in)
 	default:
 		return nil, fmt.Errorf("unsupported node type: %s", nodeInfo.Type)
 	}
@@ -516,6 +518,61 @@ func buildAnyTLS(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourConfig
 	inbound.Settings = (*json.RawMessage)(&sets)
 	if err != nil {
 		return fmt.Errorf("marshal anytls settings error: %s", err)
+	}
+	return nil
+}
+
+// buildShadowFlow builds ShadowFlow protocol inbound.
+// ShadowFlow uses VLESS as the underlying Xray protocol since its transport layer
+// (Reality/TLS + WS/gRPC/TCP) is fully compatible with the VLESS pipeline.
+// ShadowFlow-specific features (camouflage, shaping) are handled at the application layer
+// by the ShadowFlow Rust engine, which wraps the Xray inbound.
+func buildShadowFlow(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourConfig) error {
+	v := nodeInfo.Common
+	// Use VLESS as the base protocol for ShadowFlow
+	// The actual ShadowFlow logic (camouflage, traffic shaping, anti-watermark)
+	// runs as a middleware layer on top of this VLESS tunnel
+	inbound.Protocol = "vless"
+	s, err := json.Marshal(&coreConf.VLessInboundConfig{
+		Decryption: "none",
+	})
+	if err != nil {
+		return fmt.Errorf("marshal shadowflow/vless config error: %s", err)
+	}
+	inbound.Settings = (*json.RawMessage)(&s)
+	if len(v.NetworkSettings) == 0 {
+		return nil
+	}
+	t := coreConf.TransportProtocol(v.Network)
+	inbound.StreamSetting = &coreConf.StreamConfig{Network: &t}
+	switch v.Network {
+	case "tcp":
+		err := json.Unmarshal(v.NetworkSettings, &inbound.StreamSetting.TCPSettings)
+		if err != nil {
+			return fmt.Errorf("unmarshal tcp settings error: %s", err)
+		}
+	case "ws":
+		err := json.Unmarshal(v.NetworkSettings, &inbound.StreamSetting.WSSettings)
+		if err != nil {
+			return fmt.Errorf("unmarshal ws settings error: %s", err)
+		}
+	case "grpc":
+		err := json.Unmarshal(v.NetworkSettings, &inbound.StreamSetting.GRPCSettings)
+		if err != nil {
+			return fmt.Errorf("unmarshal grpc settings error: %s", err)
+		}
+	case "httpupgrade":
+		err := json.Unmarshal(v.NetworkSettings, &inbound.StreamSetting.HTTPUPGRADESettings)
+		if err != nil {
+			return fmt.Errorf("unmarshal httpupgrade settings error: %s", err)
+		}
+	case "splithttp", "xhttp":
+		err := json.Unmarshal(v.NetworkSettings, &inbound.StreamSetting.SplitHTTPSettings)
+		if err != nil {
+			return fmt.Errorf("unmarshal xhttp settings error: %s", err)
+		}
+	default:
+		return errors.New("the network type is not vail")
 	}
 	return nil
 }

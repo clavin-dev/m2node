@@ -148,6 +148,9 @@ func (v *V2Core) AddUsers(p *AddUsersParams) (added int, err error) {
 		users = buildTuicUsers(p.Tag, p.Users)
 	case "anytls":
 		users = buildAnyTLSUsers(p.Tag, p.Users)
+	case "shadowflow":
+		// ShadowFlow uses VLESS as base protocol, so user handling is identical
+		users = buildVlessUsers(p.Tag, p.Users, p.Common.Flow)
 	default:
 		return 0, fmt.Errorf("unsupported node type: %s", p.NodeInfo.Type)
 	}

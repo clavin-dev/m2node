@@ -61,6 +61,9 @@ type CommonNode struct {
 	Obfs                    string `json:"obfs"`
 	ObfsPassword            string `json:"obfs_password"`
 	Ignore_Client_Bandwidth bool   `json:"ignore_client_bandwidth"`
+	//shadowflow
+	Camouflage      string          `json:"camouflage"`
+	ShapingSettings json.RawMessage `json:"shaping_settings"`
 }
 
 type Route struct {
@@ -158,7 +161,7 @@ func (c *Client) GetNodeInfo(ctx context.Context) (node *NodeInfo, err error) {
 		return nil, fmt.Errorf("decode node params error: %s", err)
 	}
 	switch cm.Protocol {
-	case "vmess", "trojan", "hysteria2", "tuic", "anytls", "vless":
+	case "vmess", "trojan", "hysteria2", "tuic", "anytls", "vless", "shadowflow":
 		node.Type = cm.Protocol
 		node.Security = cm.Tls
 	case "shadowsocks":
