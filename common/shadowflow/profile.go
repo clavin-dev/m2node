@@ -173,114 +173,215 @@ var (
 	}
 
 	// ================================================================
-	// HIGH-BANDWIDTH PROFILES — for large traffic camouflage
+	// 中国大厂流量画像 — 伪装为国内最常见的应用流量
+	// GFW 不可能封锁自家流量，这是最安全的伪装身份
 	// ================================================================
 
-	// VideoStreamProfile — Netflix/YouTube adaptive streaming over HTTP/2
-	// Captured from: Chrome → youtube.com 4K streaming, netflix.com
-	// Key characteristics:
-	//   - S→C: predominantly large chunks (video segments)
-	//   - Periodic small packets (heartbeat, buffer status)
-	//   - C→S: small requests (range requests, quality reports)
-	//   - Burst pattern: large chunk → small pause → large chunk
-	VideoStreamProfile = &TrafficProfile{
-		Name: "video_stream",
+	// DouyinProfile — 抖音短视频刷视频流量
+	// 特征: 频繁的小上行(滑动/点赞/心跳) + 中等下行(2-5秒短视频片段)
+	// 短视频不像长视频那样持续大包，而是突发性中等包
+	DouyinProfile = &TrafficProfile{
+		Name: "douyin",
 		C2SSizes: []SizeRange{
-			{Min: 26, Max: 80, Weight: 35},     // Range requests, ACK, heartbeat
-			{Min: 81, Max: 300, Weight: 30},     // Quality change requests, analytics
-			{Min: 301, Max: 800, Weight: 20},    // Buffering status, DRM license
-			{Min: 801, Max: 2000, Weight: 10},   // Subtitle fetch, manifest update
-			{Min: 2001, Max: 5000, Weight: 5},   // Upload (watch history, telemetry)
+			{Min: 26, Max: 80, Weight: 40},     // 心跳、滑动事件、点赞
+			{Min: 81, Max: 250, Weight: 25},     // 评论发送、搜索请求
+			{Min: 251, Max: 600, Weight: 20},    // 用户行为上报、广告回传
+			{Min: 601, Max: 1500, Weight: 10},   // 视频上传元数据、封面
+			{Min: 1501, Max: 4000, Weight: 5},   // 偶尔的大上行(发布视频)
 		},
 		S2CSizes: []SizeRange{
-			{Min: 26, Max: 100, Weight: 5},       // ACK, SETTINGS, WINDOW_UPDATE
-			{Min: 101, Max: 500, Weight: 5},      // HEADERS, small metadata
-			{Min: 501, Max: 4000, Weight: 5},     // Manifests, playlists (m3u8/mpd)
-			{Min: 4001, Max: 12000, Weight: 15},  // Medium video chunks
-			{Min: 12001, Max: 16384, Weight: 70}, // ★ Large video data (dominant)
+			{Min: 26, Max: 150, Weight: 8},       // ACK、推送通知
+			{Min: 151, Max: 800, Weight: 10},     // 用户信息、评论列表
+			{Min: 801, Max: 4000, Weight: 15},    // 商品卡片、推荐列表 JSON
+			{Min: 4001, Max: 10000, Weight: 30},  // ★ 短视频片段(2-3秒, 主流)
+			{Min: 10001, Max: 16384, Weight: 37}, // ★ 高清短视频片段(4-5秒)
 		},
 		C2SInitial: []InitialPacket{
-			{MinSize: 60, MaxSize: 120},  // H2 SETTINGS
-			{MinSize: 26, MaxSize: 50},   // WINDOW_UPDATE
-			{MinSize: 200, MaxSize: 600}, // First video manifest request
-			{MinSize: 26, MaxSize: 80},   // ACK
+			{MinSize: 60, MaxSize: 130},   // H2 SETTINGS
+			{MinSize: 26, MaxSize: 50},    // WINDOW_UPDATE
+			{MinSize: 300, MaxSize: 900},  // 首次推荐请求(带设备信息)
+			{MinSize: 26, MaxSize: 80},    // ACK
 		},
 		S2CInitial: []InitialPacket{
-			{MinSize: 80, MaxSize: 200},     // SETTINGS
-			{MinSize: 26, MaxSize: 50},      // WINDOW_UPDATE
-			{MinSize: 500, MaxSize: 3000},   // Manifest response
-			{MinSize: 12000, MaxSize: 16384}, // First video segment (big)
+			{MinSize: 80, MaxSize: 200},      // SETTINGS
+			{MinSize: 26, MaxSize: 50},       // WINDOW_UPDATE
+			{MinSize: 800, MaxSize: 3000},    // 推荐列表 JSON
+			{MinSize: 6000, MaxSize: 16384},  // 首个视频片段预加载
 		},
 		MinRecordPayload: 26,
 		MaxRecordPayload: 16384,
 	}
 
-	// CloudSyncProfile — iCloud/Google Drive/OneDrive sync
-	// Captured from: macOS iCloud sync, Google Drive large upload
-	// Key characteristics:
-	//   - Bidirectional large chunks (upload AND download)
-	//   - Periodic metadata exchanges (file lists, checksums)
-	//   - Very large sustained throughput is NORMAL for this profile
-	//   - Mix of small control + large data is expected
-	CloudSyncProfile = &TrafficProfile{
-		Name: "cloud_sync",
+	// BilibiliProfile — B站视频/直播流量
+	// 特征: 长视频持续大包 + 弹幕小包穿插 + 偶尔的评论/互动
+	// 与抖音区别: 持续时间更长，下行比例更高
+	BilibiliProfile = &TrafficProfile{
+		Name: "bilibili",
 		C2SSizes: []SizeRange{
-			{Min: 30, Max: 100, Weight: 10},     // Keepalive, ACK
-			{Min: 101, Max: 500, Weight: 10},    // Metadata, file info
-			{Min: 501, Max: 4000, Weight: 15},   // Small file uploads, checksums
-			{Min: 4001, Max: 12000, Weight: 25}, // Medium file chunks
-			{Min: 12001, Max: 16384, Weight: 40}, // ★ Large upload chunks (dominant)
+			{Min: 26, Max: 60, Weight: 35},      // 弹幕心跳、播放器状态
+			{Min: 61, Max: 200, Weight: 25},      // 发弹幕、点赞、投币
+			{Min: 201, Max: 600, Weight: 20},     // 评论、搜索、换P
+			{Min: 601, Max: 1500, Weight: 15},    // 质量切换请求、历史上报
+			{Min: 1501, Max: 4000, Weight: 5},    // 稍大的请求
 		},
 		S2CSizes: []SizeRange{
-			{Min: 30, Max: 100, Weight: 8},       // ACK, control
-			{Min: 101, Max: 500, Weight: 7},      // Metadata responses
-			{Min: 501, Max: 4000, Weight: 10},    // File list, delta info
-			{Min: 4001, Max: 12000, Weight: 25},  // Medium download chunks
-			{Min: 12001, Max: 16384, Weight: 50}, // ★ Large download chunks (dominant)
+			{Min: 26, Max: 100, Weight: 5},        // 弹幕 ACK
+			{Min: 101, Max: 500, Weight: 8},       // 弹幕数据包(单条弹幕很小)
+			{Min: 501, Max: 2000, Weight: 7},      // 批量弹幕、评论列表
+			{Min: 2001, Max: 10000, Weight: 15},   // 中等视频分片
+			{Min: 10001, Max: 16384, Weight: 65},  // ★★ 视频数据(B站长视频为主)
 		},
 		C2SInitial: []InitialPacket{
-			{MinSize: 60, MaxSize: 150},    // TLS setup
-			{MinSize: 30, MaxSize: 60},     // Control
-			{MinSize: 300, MaxSize: 1200},  // Auth + sync state
-			{MinSize: 100, MaxSize: 500},   // File list request
+			{MinSize: 60, MaxSize: 120},
+			{MinSize: 26, MaxSize: 50},
+			{MinSize: 250, MaxSize: 700},   // 视频播放请求(带 bvid 等)
+			{MinSize: 26, MaxSize: 100},
 		},
 		S2CInitial: []InitialPacket{
-			{MinSize: 80, MaxSize: 250},
-			{MinSize: 30, MaxSize: 60},
-			{MinSize: 200, MaxSize: 800},
-			{MinSize: 4000, MaxSize: 16384},
+			{MinSize: 80, MaxSize: 200},
+			{MinSize: 26, MaxSize: 50},
+			{MinSize: 400, MaxSize: 2000},     // 播放信息 JSON
+			{MinSize: 10000, MaxSize: 16384},  // 首个视频分片
+		},
+		MinRecordPayload: 26,
+		MaxRecordPayload: 16384,
+	}
+
+	// WeChatProfile — 微信聊天/朋友圈/小程序
+	// 特征: 大量碎小包(文字消息) + 中等包(图片/语音) + 偶尔大包(视频/文件)
+	// 最复杂的流量模式，包大小分布最均匀
+	WeChatProfile = &TrafficProfile{
+		Name: "wechat",
+		C2SSizes: []SizeRange{
+			{Min: 30, Max: 100, Weight: 30},     // 文字消息、心跳、已读回执
+			{Min: 101, Max: 400, Weight: 25},    // 语音消息(分片)、表情包请求
+			{Min: 401, Max: 1500, Weight: 20},   // 图片发送(缩略图)、小程序请求
+			{Min: 1501, Max: 5000, Weight: 15},  // 图片发送(原图分片)
+			{Min: 5001, Max: 16384, Weight: 10}, // 视频/文件发送
+		},
+		S2CSizes: []SizeRange{
+			{Min: 30, Max: 100, Weight: 20},      // 消息 ACK、状态同步
+			{Min: 101, Max: 500, Weight: 20},     // 文字消息推送、通知
+			{Min: 501, Max: 2000, Weight: 20},    // 语音下载、表情包
+			{Min: 2001, Max: 8000, Weight: 20},   // 图片(朋友圈/聊天)
+			{Min: 8001, Max: 16384, Weight: 20},  // 视频/文件下载、小程序资源
+		},
+		C2SInitial: []InitialPacket{
+			{MinSize: 80, MaxSize: 200},     // 连接建立
+			{MinSize: 30, MaxSize: 80},      // 认证令牌
+			{MinSize: 200, MaxSize: 800},    // 同步请求(消息列表)
+			{MinSize: 30, MaxSize: 150},     // 联系人同步
+		},
+		S2CInitial: []InitialPacket{
+			{MinSize: 100, MaxSize: 300},
+			{MinSize: 30, MaxSize: 80},
+			{MinSize: 300, MaxSize: 1500},    // 消息同步响应
+			{MinSize: 500, MaxSize: 5000},    // 离线消息推送
 		},
 		MinRecordPayload: 30,
 		MaxRecordPayload: 16384,
 	}
 
-	// CDNDistributionProfile — Cloudflare/Akamai CDN edge distribution
-	// Key: Mostly S→C, very large records, minimal C→S
-	// This profile justifies the highest possible sustained throughput
-	CDNDistributionProfile = &TrafficProfile{
-		Name: "cdn_distribution",
+	// TaobaoProfile — 淘宝/天猫购物浏览
+	// 特征: 频繁中等下行(商品图片) + 小上行(搜索/点击/滑动)
+	// 大量并发小请求，图片为主
+	TaobaoProfile = &TrafficProfile{
+		Name: "taobao",
 		C2SSizes: []SizeRange{
-			{Min: 26, Max: 60, Weight: 50},      // Range requests, tiny
-			{Min: 61, Max: 300, Weight: 30},      // HEADERS, small requests
-			{Min: 301, Max: 1000, Weight: 15},    // Occasional POST
-			{Min: 1001, Max: 4000, Weight: 5},    // Rare large C→S
+			{Min: 26, Max: 100, Weight: 30},     // 滑动事件、曝光上报
+			{Min: 101, Max: 400, Weight: 30},    // 搜索请求、商品详情请求
+			{Min: 401, Max: 1000, Weight: 25},   // 筛选/排序、购物车操作
+			{Min: 1001, Max: 3000, Weight: 10},  // 下单请求(带地址等)
+			{Min: 3001, Max: 8000, Weight: 5},   // 偶尔的大请求
 		},
 		S2CSizes: []SizeRange{
-			{Min: 26, Max: 100, Weight: 3},        // ACK only
-			{Min: 101, Max: 1000, Weight: 2},      // Headers
-			{Min: 1001, Max: 8000, Weight: 5},     // Small assets
-			{Min: 8001, Max: 14000, Weight: 10},   // Medium assets
-			{Min: 14001, Max: 16384, Weight: 80},  // ★★ Massive data (CDN bulk)
+			{Min: 26, Max: 200, Weight: 10},      // ACK、小通知
+			{Min: 201, Max: 1000, Weight: 15},    // 搜索建议、小 JSON
+			{Min: 1001, Max: 4000, Weight: 25},   // ★ 商品列表 JSON
+			{Min: 4001, Max: 10000, Weight: 30},  // ★ 商品图片(webp 压缩)
+			{Min: 10001, Max: 16384, Weight: 20}, // 大图、详情页资源
+		},
+		C2SInitial: []InitialPacket{
+			{MinSize: 60, MaxSize: 120},
+			{MinSize: 26, MaxSize: 50},
+			{MinSize: 300, MaxSize: 800},   // 首页请求(带用户态)
+			{MinSize: 26, MaxSize: 100},
+		},
+		S2CInitial: []InitialPacket{
+			{MinSize: 80, MaxSize: 200},
+			{MinSize: 26, MaxSize: 50},
+			{MinSize: 1000, MaxSize: 4000},   // 首页推荐 JSON
+			{MinSize: 3000, MaxSize: 12000},  // 首屏商品图片
+		},
+		MinRecordPayload: 26,
+		MaxRecordPayload: 16384,
+	}
+
+	// BaiduNetdiskProfile — 百度网盘上传下载
+	// 特征: 超大双向流量，持续满包传输
+	// 这是大流量场景最好的伪装 — 网盘传文件本来就是跑满带宽
+	BaiduNetdiskProfile = &TrafficProfile{
+		Name: "baidu_netdisk",
+		C2SSizes: []SizeRange{
+			{Min: 30, Max: 100, Weight: 8},       // 心跳、任务查询
+			{Min: 101, Max: 500, Weight: 7},      // 文件列表、元数据
+			{Min: 501, Max: 4000, Weight: 10},    // 小文件上传、校验
+			{Min: 4001, Max: 12000, Weight: 30},  // ★ 上传分片
+			{Min: 12001, Max: 16384, Weight: 45}, // ★★ 大文件上传(满包)
+		},
+		S2CSizes: []SizeRange{
+			{Min: 30, Max: 100, Weight: 5},        // ACK
+			{Min: 101, Max: 500, Weight: 5},       // 进度回复
+			{Min: 501, Max: 4000, Weight: 8},      // 文件列表响应
+			{Min: 4001, Max: 12000, Weight: 22},   // ★ 下载分片
+			{Min: 12001, Max: 16384, Weight: 60},  // ★★★ 大文件下载(满包主导)
+		},
+		C2SInitial: []InitialPacket{
+			{MinSize: 60, MaxSize: 150},
+			{MinSize: 30, MaxSize: 60},
+			{MinSize: 300, MaxSize: 1200},    // 登录 + 文件列表请求
+			{MinSize: 100, MaxSize: 500},
+		},
+		S2CInitial: []InitialPacket{
+			{MinSize: 80, MaxSize: 250},
+			{MinSize: 30, MaxSize: 60},
+			{MinSize: 200, MaxSize: 800},
+			{MinSize: 8000, MaxSize: 16384},  // 立即开始传输
+		},
+		MinRecordPayload: 30,
+		MaxRecordPayload: 16384,
+	}
+
+	// TencentVideoProfile — 腾讯视频/爱奇艺长视频
+	// 特征: 持续高带宽下行，非常少的上行
+	// 与B站区别: 无弹幕，更纯粹的视频流
+	TencentVideoProfile = &TrafficProfile{
+		Name: "tencent_video",
+		C2SSizes: []SizeRange{
+			{Min: 26, Max: 60, Weight: 45},      // 播放器心跳、缓冲状态
+			{Min: 61, Max: 200, Weight: 25},      // 清晰度切换、广告跳过
+			{Min: 201, Max: 600, Weight: 15},     // DRM 许可请求、选集
+			{Min: 601, Max: 1500, Weight: 10},    // 播放历史上报
+			{Min: 1501, Max: 4000, Weight: 5},    // 评论提交
+		},
+		S2CSizes: []SizeRange{
+			{Min: 26, Max: 100, Weight: 3},        // ACK
+			{Min: 101, Max: 500, Weight: 3},       // 播放信息
+			{Min: 501, Max: 3000, Weight: 4},      // 字幕、播放列表
+			{Min: 3001, Max: 10000, Weight: 15},   // 中等视频分片
+			{Min: 10001, Max: 16384, Weight: 75},  // ★★★ 视频流(绝对主导)
 		},
 		C2SInitial: []InitialPacket{
 			{MinSize: 60, MaxSize: 100},
 			{MinSize: 26, MaxSize: 40},
-			{MinSize: 100, MaxSize: 400},
+			{MinSize: 150, MaxSize: 500},   // 播放请求
+			{MinSize: 26, MaxSize: 60},
 		},
 		S2CInitial: []InitialPacket{
-			{MinSize: 80, MaxSize: 200},
+			{MinSize: 80, MaxSize: 180},
 			{MinSize: 26, MaxSize: 40},
-			{MinSize: 14000, MaxSize: 16384}, // CDN immediately sends large data
+			{MinSize: 500, MaxSize: 2000},     // 播放配置
+			{MinSize: 12000, MaxSize: 16384},  // 首帧视频数据
 		},
 		MinRecordPayload: 26,
 		MaxRecordPayload: 16384,
@@ -288,12 +389,15 @@ var (
 
 	// profileRegistry for lookup by name
 	profileRegistry = map[string]*TrafficProfile{
-		"chrome_h2":        ChromeH2Profile,
-		"safari":           SafariProfile,
-		"firefox":          FirefoxProfile,
-		"video_stream":     VideoStreamProfile,
-		"cloud_sync":       CloudSyncProfile,
-		"cdn_distribution": CDNDistributionProfile,
+		"chrome_h2":       ChromeH2Profile,
+		"safari":          SafariProfile,
+		"firefox":         FirefoxProfile,
+		"douyin":          DouyinProfile,
+		"bilibili":        BilibiliProfile,
+		"wechat":          WeChatProfile,
+		"taobao":          TaobaoProfile,
+		"baidu_netdisk":   BaiduNetdiskProfile,
+		"tencent_video":   TencentVideoProfile,
 	}
 	registryMu sync.RWMutex
 )

@@ -2,6 +2,7 @@ package shadowflow
 
 import (
 	"fmt"
+	mathrand "math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -67,10 +68,10 @@ var tierProfiles = map[int32][]*TrafficProfile{
 }
 
 func init() {
-	// Will be populated after profiles are initialized
-	tierProfiles[TierStreaming] = []*TrafficProfile{VideoStreamProfile}
-	tierProfiles[TierCloudSync] = []*TrafficProfile{CloudSyncProfile}
-	tierProfiles[TierCDN] = []*TrafficProfile{CDNDistributionProfile}
+	// 中国大厂流量画像 — 根据流量大小匹配最合理的国内应用
+	tierProfiles[TierStreaming] = []*TrafficProfile{DouyinProfile, BilibiliProfile}
+	tierProfiles[TierCloudSync] = []*TrafficProfile{BaiduNetdiskProfile}
+	tierProfiles[TierCDN] = []*TrafficProfile{TencentVideoProfile}
 }
 
 // NewAdaptiveSelector creates a throughput-aware profile selector.
@@ -161,13 +162,18 @@ func (a *AdaptiveSelector) evaluate() {
 	var profile *TrafficProfile
 	switch newTier {
 	case TierBrowsing:
+		// 低流量: 随机选一个浏览画像
 		profile = GetRandomProfile()
 	case TierStreaming:
-		profile = VideoStreamProfile
+		// 中流量: 抖音或B站 (随机)
+		pool := tierProfiles[TierStreaming]
+		profile = pool[mathrand.Intn(len(pool))]
 	case TierCloudSync:
-		profile = CloudSyncProfile
+		// 大流量: 百度网盘
+		profile = BaiduNetdiskProfile
 	case TierCDN:
-		profile = CDNDistributionProfile
+		// 超大流量: 腾讯视频
+		profile = TencentVideoProfile
 	}
 
 	if profile != nil {
