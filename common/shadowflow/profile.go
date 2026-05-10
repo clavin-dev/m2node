@@ -247,38 +247,39 @@ var (
 		MaxRecordPayload: 16384,
 	}
 
-	// WeChatProfile — 微信聊天/朋友圈/小程序
-	// 特征: 大量碎小包(文字消息) + 中等包(图片/语音) + 偶尔大包(视频/文件)
-	// 最复杂的流量模式，包大小分布最均匀
-	WeChatProfile = &TrafficProfile{
-		Name: "wechat",
+	// AppleMusicProfile — Apple Music 音乐流媒体
+	// 特征: 持续中等大小下行(音频分片 AAC/ALAC 256kbps-24bit)
+	// + 小上行(播放控制/歌词请求) + 间歇性大包(专辑封面/歌词动画)
+	// 与视频的区别: 包更小更均匀，因为音频码率比视频低得多
+	AppleMusicProfile = &TrafficProfile{
+		Name: "apple_music",
 		C2SSizes: []SizeRange{
-			{Min: 30, Max: 100, Weight: 30},     // 文字消息、心跳、已读回执
-			{Min: 101, Max: 400, Weight: 25},    // 语音消息(分片)、表情包请求
-			{Min: 401, Max: 1500, Weight: 20},   // 图片发送(缩略图)、小程序请求
-			{Min: 1501, Max: 5000, Weight: 15},  // 图片发送(原图分片)
-			{Min: 5001, Max: 16384, Weight: 10}, // 视频/文件发送
+			{Min: 26, Max: 80, Weight: 35},      // 播放心跳、进度上报、暂停/继续
+			{Min: 81, Max: 250, Weight: 30},      // 搜索请求、歌曲切换、收藏
+			{Min: 251, Max: 600, Weight: 20},     // 播放列表操作、歌词请求
+			{Min: 601, Max: 1500, Weight: 10},    // 库同步、推荐反馈
+			{Min: 1501, Max: 3000, Weight: 5},    // 偏好设置上传
 		},
 		S2CSizes: []SizeRange{
-			{Min: 30, Max: 100, Weight: 20},      // 消息 ACK、状态同步
-			{Min: 101, Max: 500, Weight: 20},     // 文字消息推送、通知
-			{Min: 501, Max: 2000, Weight: 20},    // 语音下载、表情包
-			{Min: 2001, Max: 8000, Weight: 20},   // 图片(朋友圈/聊天)
-			{Min: 8001, Max: 16384, Weight: 20},  // 视频/文件下载、小程序资源
+			{Min: 26, Max: 100, Weight: 8},        // ACK、控制响应
+			{Min: 101, Max: 500, Weight: 10},      // 歌曲元数据、歌词文本
+			{Min: 501, Max: 2000, Weight: 15},     // 音频分片(AAC 256kbps, 约0.5秒)
+			{Min: 2001, Max: 6000, Weight: 35},    // ★ 音频分片(主流大小, 1-2秒 AAC)
+			{Min: 6001, Max: 16384, Weight: 32},   // ★ 无损音频/专辑封面图片
 		},
 		C2SInitial: []InitialPacket{
-			{MinSize: 80, MaxSize: 200},     // 连接建立
-			{MinSize: 30, MaxSize: 80},      // 认证令牌
-			{MinSize: 200, MaxSize: 800},    // 同步请求(消息列表)
-			{MinSize: 30, MaxSize: 150},     // 联系人同步
+			{MinSize: 60, MaxSize: 130},     // H2 SETTINGS
+			{MinSize: 26, MaxSize: 50},      // WINDOW_UPDATE
+			{MinSize: 200, MaxSize: 600},    // 首次播放请求(带认证信息)
+			{MinSize: 26, MaxSize: 80},      // ACK
 		},
 		S2CInitial: []InitialPacket{
-			{MinSize: 100, MaxSize: 300},
-			{MinSize: 30, MaxSize: 80},
-			{MinSize: 300, MaxSize: 1500},    // 消息同步响应
-			{MinSize: 500, MaxSize: 5000},    // 离线消息推送
+			{MinSize: 80, MaxSize: 200},
+			{MinSize: 26, MaxSize: 50},
+			{MinSize: 300, MaxSize: 1200},     // 播放列表/歌曲信息 JSON
+			{MinSize: 2000, MaxSize: 8000},    // 首个音频分片预加载
 		},
-		MinRecordPayload: 30,
+		MinRecordPayload: 26,
 		MaxRecordPayload: 16384,
 	}
 
@@ -317,29 +318,30 @@ var (
 		MaxRecordPayload: 16384,
 	}
 
-	// BaiduNetdiskProfile — 百度网盘上传下载
+	// ICloudSyncProfile — iCloud 同步(照片/备份/文档)
 	// 特征: 超大双向流量，持续满包传输
-	// 这是大流量场景最好的伪装 — 网盘传文件本来就是跑满带宽
-	BaiduNetdiskProfile = &TrafficProfile{
-		Name: "baidu_netdisk",
+	// 照片备份时上行为主，恢复时下行为主
+	// 这是大流量场景最好的伪装 — iCloud 传文件本来就是跑满带宽
+	ICloudSyncProfile = &TrafficProfile{
+		Name: "icloud_sync",
 		C2SSizes: []SizeRange{
-			{Min: 30, Max: 100, Weight: 8},       // 心跳、任务查询
-			{Min: 101, Max: 500, Weight: 7},      // 文件列表、元数据
-			{Min: 501, Max: 4000, Weight: 10},    // 小文件上传、校验
-			{Min: 4001, Max: 12000, Weight: 30},  // ★ 上传分片
-			{Min: 12001, Max: 16384, Weight: 45}, // ★★ 大文件上传(满包)
+			{Min: 30, Max: 100, Weight: 8},       // 心跳、同步状态查询
+			{Min: 101, Max: 500, Weight: 7},      // 文件元数据、目录列表
+			{Min: 501, Max: 4000, Weight: 10},    // 小文件上传、校验和
+			{Min: 4001, Max: 12000, Weight: 30},  // ★ 照片上传分片(HEIC 压缩)
+			{Min: 12001, Max: 16384, Weight: 45}, // ★★ 大文件/视频备份(满包)
 		},
 		S2CSizes: []SizeRange{
-			{Min: 30, Max: 100, Weight: 5},        // ACK
-			{Min: 101, Max: 500, Weight: 5},       // 进度回复
-			{Min: 501, Max: 4000, Weight: 8},      // 文件列表响应
+			{Min: 30, Max: 100, Weight: 5},        // ACK、同步确认
+			{Min: 101, Max: 500, Weight: 5},       // 进度回复、元数据
+			{Min: 501, Max: 4000, Weight: 8},      // 文件列表响应、冲突解决
 			{Min: 4001, Max: 12000, Weight: 22},   // ★ 下载分片
-			{Min: 12001, Max: 16384, Weight: 60},  // ★★★ 大文件下载(满包主导)
+			{Min: 12001, Max: 16384, Weight: 60},  // ★★★ 照片/文件下载(满包主导)
 		},
 		C2SInitial: []InitialPacket{
 			{MinSize: 60, MaxSize: 150},
 			{MinSize: 30, MaxSize: 60},
-			{MinSize: 300, MaxSize: 1200},    // 登录 + 文件列表请求
+			{MinSize: 300, MaxSize: 1200},    // Apple ID 认证 + 同步状态
 			{MinSize: 100, MaxSize: 500},
 		},
 		S2CInitial: []InitialPacket{
@@ -394,9 +396,9 @@ var (
 		"firefox":         FirefoxProfile,
 		"douyin":          DouyinProfile,
 		"bilibili":        BilibiliProfile,
-		"wechat":          WeChatProfile,
+		"apple_music":     AppleMusicProfile,
 		"taobao":          TaobaoProfile,
-		"baidu_netdisk":   BaiduNetdiskProfile,
+		"icloud_sync":     ICloudSyncProfile,
 		"tencent_video":   TencentVideoProfile,
 	}
 	registryMu sync.RWMutex

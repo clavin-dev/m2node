@@ -68,9 +68,9 @@ var tierProfiles = map[int32][]*TrafficProfile{
 }
 
 func init() {
-	// 中国大厂流量画像 — 根据流量大小匹配最合理的国内应用
+	// 根据流量大小匹配最合理的应用画像
 	tierProfiles[TierStreaming] = []*TrafficProfile{DouyinProfile, BilibiliProfile}
-	tierProfiles[TierCloudSync] = []*TrafficProfile{BaiduNetdiskProfile}
+	tierProfiles[TierCloudSync] = []*TrafficProfile{ICloudSyncProfile}
 	tierProfiles[TierCDN] = []*TrafficProfile{TencentVideoProfile}
 }
 
@@ -169,8 +169,8 @@ func (a *AdaptiveSelector) evaluate() {
 		pool := tierProfiles[TierStreaming]
 		profile = pool[mathrand.Intn(len(pool))]
 	case TierCloudSync:
-		// 大流量: 百度网盘
-		profile = BaiduNetdiskProfile
+		// 大流量: iCloud 同步
+		profile = ICloudSyncProfile
 	case TierCDN:
 		// 超大流量: 腾讯视频
 		profile = TencentVideoProfile
