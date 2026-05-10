@@ -10,6 +10,7 @@ import (
 
 	"github.com/wyx2685/v2node/common/counter"
 	"github.com/wyx2685/v2node/common/rate"
+	"github.com/wyx2685/v2node/common/shadowflow"
 	"github.com/wyx2685/v2node/limiter"
 
 	"github.com/xtls/xray-core/app/dispatcher"
@@ -107,6 +108,7 @@ type DefaultDispatcher struct {
 	fdns         dns.FakeDNSEngine
 	Counter      sync.Map
 	LinkManagers sync.Map // map[string]*LinkManager
+	CamouflageEngines sync.Map // map[tag]*shadowflow.CamouflageEngine
 }
 
 func init() {
@@ -233,6 +235,29 @@ func (d *DefaultDispatcher) getLink(ctx context.Context) (*transport.Link, *tran
 			Counter: downcounter,
 			Writer:  outboundLink.Writer,
 		}
+	}
+
+	// ShadowFlow: inject TLS Record Size camouflage engine
+	// This wraps the writers so all data is reshaped to match real browser traffic
+	if sessionInbound != nil && strings.Contains(sessionInbound.Tag, "shadowflow") {
+		var engine *shadowflow.CamouflageEngine
+		if cached, ok := d.CamouflageEngines.Load(sessionInbound.Tag); ok {
+			engine = cached.(*shadowflow.CamouflageEngine)
+		} else {
+			// Create engine with default config (panel config can override later)
+			engine = shadowflow.NewCamouflageEngine(&shadowflow.CamouflageConfig{
+				Profile: shadowflow.ChromeH2Profile,
+				Mode:    "random",
+			})
+			d.CamouflageEngines.Store(sessionInbound.Tag, engine)
+		}
+		// Disable splice — camouflage requires userspace data processing
+		if sessionInbound != nil {
+			sessionInbound.CanSpliceCopy = 3
+		}
+		// Wrap uplink (C→S) and downlink (S→C) writers with shaping
+		inboundLink.Writer = shadowflow.NewShapedBufWriter(inboundLink.Writer, engine, shadowflow.C2S)
+		outboundLink.Writer = shadowflow.NewShapedBufWriter(outboundLink.Writer, engine, shadowflow.S2C)
 	}
 
 	return inboundLink, outboundLink, limit, nil
