@@ -606,8 +606,13 @@ func buildShadowFlow(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourCo
 		v.DownloadHost,
 		v.PathPool,
 		v.ConnMaxLifetime,
+		v.TransportType,
+		v.TransportPath,
+		v.TransportHost,
 	)
 	shadowflow.SetNodeConfig(nodeInfo.Tag, sfConfig)
+	log.Printf("[ShadowFlow] transport=%s path=%s host=%s",
+		sfConfig.TransportType, sfConfig.TransportPath, sfConfig.TransportHost)
 
 	// ShadowStream uses raw TCP — the custom framing/padding runs in the
 	// dispatcher layer above the Xray transport, so no special transport config.

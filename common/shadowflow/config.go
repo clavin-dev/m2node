@@ -44,6 +44,15 @@ type NodeConfig struct {
 	// Connection max lifetime in seconds (0 = no limit).
 	// When set, connections are cycled periodically to switch paths.
 	ConnMaxLifetime int `json:"conn_max_lifetime"`
+
+	// Transport mode: "tcp", "ws", "grpc", "reality"
+	TransportType string `json:"transport_type"`
+
+	// Transport path for ws/grpc (e.g. "/ws", "/grpc.service/Method")
+	TransportPath string `json:"transport_path"`
+
+	// Transport host for ws/grpc CDN (e.g. "cdn.example.com")
+	TransportHost string `json:"transport_host"`
 }
 
 // ShapingConfig is the parsed shaping_settings JSON from the panel.
@@ -104,7 +113,8 @@ func DeleteNodeConfig(tag string) {
 func ParseFromCommonNode(camouflage string, shapingSettingsRaw json.RawMessage,
 	sniMode string, switchMin, switchMax int,
 	uploadHost, downloadHost string,
-	pathPool string, connMaxLifetime int) *NodeConfig {
+	pathPool string, connMaxLifetime int,
+	transportType, transportPath, transportHost string) *NodeConfig {
 
 	config := &NodeConfig{
 		Camouflage:        camouflage,
@@ -115,6 +125,9 @@ func ParseFromCommonNode(camouflage string, shapingSettingsRaw json.RawMessage,
 		DownloadHost:      downloadHost,
 		PathPool:          pathPool,
 		ConnMaxLifetime:   connMaxLifetime,
+		TransportType:     transportType,
+		TransportPath:     transportPath,
+		TransportHost:     transportHost,
 	}
 
 	// Defaults
@@ -129,6 +142,12 @@ func ParseFromCommonNode(camouflage string, shapingSettingsRaw json.RawMessage,
 	}
 	if config.SwitchIntervalMax <= 0 || config.SwitchIntervalMax < config.SwitchIntervalMin {
 		config.SwitchIntervalMax = 120
+	}
+	if config.TransportType == "" {
+		config.TransportType = "tcp"
+	}
+	if config.TransportPath == "" {
+		config.TransportPath = "/ws"
 	}
 
 	// Parse shaping_settings JSON

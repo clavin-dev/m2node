@@ -71,6 +71,9 @@ type CommonNode struct {
 	DownloadHost      string          `json:"download_host"`
 	PathPool          string          `json:"path_pool"`
 	ConnMaxLifetime   int             `json:"conn_max_lifetime"`
+	TransportType     string          `json:"transport_type"`
+	TransportPath     string          `json:"transport_path"`
+	TransportHost     string          `json:"transport_host"`
 }
 
 type Route struct {
