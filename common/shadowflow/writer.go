@@ -1,6 +1,10 @@
 package shadowflow
 
 import (
+	"crypto/rand"
+	mathrand "math/rand"
+	"time"
+
 	"github.com/xtls/xray-core/common/buf"
 )
 
@@ -54,10 +58,22 @@ func (w *ShapedBufWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 	// Reshape into profile-conforming chunks
 	var shaped buf.MultiBuffer
 	offset := 0
+	chunkIndex := 0
 	for offset < len(data) {
 		targetSize := w.getTargetSize(profile)
 		if targetSize <= 0 {
 			targetSize = profile.MinRecordPayload
+		}
+
+		// Inter-packet timing jitter between chunks
+		if chunkIndex > 0 && profile.InterPacketDelayMax > 0 {
+			delay := profile.InterPacketDelayMin
+			if profile.InterPacketDelayMax > profile.InterPacketDelayMin {
+				delay += mathrand.Intn(profile.InterPacketDelayMax - profile.InterPacketDelayMin)
+			}
+			if delay > 0 {
+				time.Sleep(time.Duration(delay) * time.Microsecond)
+			}
 		}
 
 		chunkEnd := offset + targetSize
@@ -82,6 +98,7 @@ func (w *ShapedBufWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 		}
 
 		offset = chunkEnd
+		chunkIndex++
 	}
 
 	return w.writer.WriteMultiBuffer(shaped)
@@ -133,12 +150,9 @@ func (w *ShapedBufWriter) padChunk(data []byte, profile *TrafficProfile) []byte 
 	if len(data) >= profile.MinRecordPayload {
 		return data
 	}
-	// Pad with random-looking bytes
+	// Pad with cryptographically random bytes (non-deterministic, non-fingerPrintable)
 	padded := make([]byte, profile.MinRecordPayload)
 	copy(padded, data)
-	// Use a simple XOR pattern for padding (fast, non-zero)
-	for i := len(data); i < len(padded); i++ {
-		padded[i] = byte(i*7 + 13)
-	}
+	rand.Read(padded[len(data):])
 	return padded
 }

@@ -170,9 +170,21 @@ func (sw *ShapedWriter) Write(data []byte) (int, error) {
 	profile := sw.engine.getProfile()
 	totalWritten := 0
 	remaining := data
+	chunkIndex := 0
 
 	for len(remaining) > 0 {
 		targetSize := sw.getTargetSize(profile)
+
+		// Inter-packet timing jitter: inject delay between chunks (not before first)
+		if chunkIndex > 0 && profile.InterPacketDelayMax > 0 {
+			delay := profile.InterPacketDelayMin
+			if profile.InterPacketDelayMax > profile.InterPacketDelayMin {
+				delay += mathrand.Intn(profile.InterPacketDelayMax - profile.InterPacketDelayMin)
+			}
+			if delay > 0 {
+				time.Sleep(time.Duration(delay) * time.Microsecond)
+			}
+		}
 
 		if len(remaining) <= targetSize {
 			// Data fits in one record — pad to target size
@@ -198,6 +210,7 @@ func (sw *ShapedWriter) Write(data []byte) (int, error) {
 			return totalWritten, err
 		}
 		remaining = remaining[targetSize:]
+		chunkIndex++
 	}
 
 	return totalWritten, nil

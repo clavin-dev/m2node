@@ -36,6 +36,9 @@ type AdaptiveSelector struct {
 	// Current tier
 	currentTier atomic.Int32
 
+	// Downgrade debounce: consecutive low-tier count before downgrading
+	downgradeTicks int
+
 	stopCh  chan struct{}
 	stopped atomic.Bool
 	wg      sync.WaitGroup
@@ -58,6 +61,9 @@ const (
 
 // measurement window for throughput calculation
 const measureWindow = 3 * time.Second
+
+// downgradeTolerance: consecutive measurements before downgrading
+const downgradeTolerance = 3
 
 // tier profiles mapping
 var tierProfiles = map[int32][]*TrafficProfile{
@@ -145,17 +151,34 @@ func (a *AdaptiveSelector) evaluate() {
 
 	oldTier := a.currentTier.Load()
 	if newTier == oldTier {
+		// Same tier — reset downgrade counter
+		a.downgradeTicks = 0
 		return
 	}
 
-	// Only upgrade tiers (don't downgrade immediately to avoid flapping)
-	// Downgrade after 2 consecutive low-tier measurements
+	// Upgrade immediately (higher throughput needs matching profile ASAP)
+	// Downgrade only after consecutive low-tier measurements (debounce)
 	if newTier < oldTier {
-		// Allow one measurement grace period before downgrading
-		// This is a simplified debounce — in production you'd use a counter
-		return
+		a.downgradeTicks++
+		if a.downgradeTicks < downgradeTolerance {
+			log.WithFields(log.Fields{
+				"current":    tierName(oldTier),
+				"measured":   tierName(newTier),
+				"tick":       a.downgradeTicks,
+				"tolerance":  downgradeTolerance,
+			}).Debug("ShadowFlow: adaptive downgrade pending")
+			return
+		}
+		// Consecutive low measurements confirmed — proceed with downgrade
+		log.WithFields(log.Fields{
+			"from":       tierName(oldTier),
+			"to":         tierName(newTier),
+			"throughput": formatBytes(int64(bps)) + "/s",
+		}).Info("ShadowFlow: adaptive profile downgrade")
 	}
 
+	// Reset counter on tier change
+	a.downgradeTicks = 0
 	a.currentTier.Store(newTier)
 
 	// Switch profile
@@ -182,7 +205,7 @@ func (a *AdaptiveSelector) evaluate() {
 			"tier":       tierName(newTier),
 			"profile":    profile.Name,
 			"throughput": formatBytes(int64(bps)) + "/s",
-		}).Info("ShadowFlow: adaptive profile upgrade")
+		}).Info("ShadowFlow: adaptive profile switch")
 	}
 }
 

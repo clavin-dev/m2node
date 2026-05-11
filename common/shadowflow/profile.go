@@ -51,6 +51,12 @@ type TrafficProfile struct {
 
 	// Maximum TLS record payload size (RFC 8449: max 16384)
 	MaxRecordPayload int
+
+	// Inter-packet timing jitter (microseconds)
+	// Breaks statistical timing correlation between packets.
+	// Different apps have distinct timing: browsing=bursty, streaming=steady
+	InterPacketDelayMin int // minimum delay between chunks (microseconds)
+	InterPacketDelayMax int // maximum delay between chunks (microseconds)
 }
 
 // Pre-built profiles from real pcap analysis
@@ -84,25 +90,37 @@ var (
 		// 2. WINDOW_UPDATE (connection-level)
 		// 3. HEADERS (first request)
 		// 4. DATA (if POST) or nothing
+		// 5-8. Subsequent request/control frames
 		C2SInitial: []InitialPacket{
 			{MinSize: 60, MaxSize: 120},   // H2 SETTINGS frame
 			{MinSize: 26, MaxSize: 50},    // WINDOW_UPDATE
 			{MinSize: 150, MaxSize: 800},  // HEADERS (first GET request)
 			{MinSize: 26, MaxSize: 100},   // WINDOW_UPDATE / PRIORITY
+			{MinSize: 100, MaxSize: 600},  // HEADERS (second request, e.g. favicon)
+			{MinSize: 26, MaxSize: 50},    // WINDOW_UPDATE
+			{MinSize: 80, MaxSize: 400},   // HEADERS (prefetch/preload)
+			{MinSize: 26, MaxSize: 80},    // WINDOW_UPDATE / PING
 		},
 		// Server response initial sequence:
 		// 1. SETTINGS + SETTINGS_ACK
 		// 2. WINDOW_UPDATE
 		// 3. HEADERS (response headers)
 		// 4. DATA (response body, usually large)
+		// 5-8. Subsequent response frames
 		S2CInitial: []InitialPacket{
 			{MinSize: 80, MaxSize: 200},     // SETTINGS
 			{MinSize: 26, MaxSize: 50},      // WINDOW_UPDATE
 			{MinSize: 100, MaxSize: 600},    // HEADERS (response)
 			{MinSize: 2000, MaxSize: 16384}, // DATA (first chunk, usually large)
+			{MinSize: 26, MaxSize: 80},      // SETTINGS_ACK / WINDOW_UPDATE
+			{MinSize: 200, MaxSize: 1200},   // HEADERS (second response)
+			{MinSize: 1000, MaxSize: 8000},  // DATA (second response body)
+			{MinSize: 26, MaxSize: 60},      // WINDOW_UPDATE
 		},
 		MinRecordPayload: 26,    // Never produce records smaller than this
 		MaxRecordPayload: 16384, // TLS maximum
+		InterPacketDelayMin: 0,     // Chrome sends bursts with minimal delay
+		InterPacketDelayMax: 3000,  // up to 3ms between H2 frames
 	}
 
 	// SafariProfile — Safari on macOS/iOS browsing Apple services
@@ -128,15 +146,25 @@ var (
 			{MinSize: 30, MaxSize: 60},
 			{MinSize: 200, MaxSize: 1000},
 			{MinSize: 30, MaxSize: 120},
+			{MinSize: 100, MaxSize: 500},
+			{MinSize: 30, MaxSize: 60},
+			{MinSize: 150, MaxSize: 800},
+			{MinSize: 30, MaxSize: 80},
 		},
 		S2CInitial: []InitialPacket{
 			{MinSize: 100, MaxSize: 300},
 			{MinSize: 30, MaxSize: 60},
 			{MinSize: 150, MaxSize: 800},
 			{MinSize: 3000, MaxSize: 16384},
+			{MinSize: 30, MaxSize: 80},
+			{MinSize: 200, MaxSize: 1000},
+			{MinSize: 1500, MaxSize: 10000},
+			{MinSize: 30, MaxSize: 60},
 		},
 		MinRecordPayload: 30,
 		MaxRecordPayload: 16384,
+		InterPacketDelayMin: 0,
+		InterPacketDelayMax: 4000,  // Safari slightly slower than Chrome
 	}
 
 	// FirefoxProfile — Firefox browsing general websites
@@ -161,15 +189,25 @@ var (
 			{MinSize: 28, MaxSize: 55},
 			{MinSize: 180, MaxSize: 750},
 			{MinSize: 28, MaxSize: 90},
+			{MinSize: 100, MaxSize: 450},
+			{MinSize: 28, MaxSize: 55},
+			{MinSize: 120, MaxSize: 600},
+			{MinSize: 28, MaxSize: 70},
 		},
 		S2CInitial: []InitialPacket{
 			{MinSize: 90, MaxSize: 250},
 			{MinSize: 28, MaxSize: 55},
 			{MinSize: 120, MaxSize: 700},
 			{MinSize: 2500, MaxSize: 16384},
+			{MinSize: 28, MaxSize: 70},
+			{MinSize: 150, MaxSize: 800},
+			{MinSize: 1500, MaxSize: 8000},
+			{MinSize: 28, MaxSize: 55},
 		},
 		MinRecordPayload: 28,
 		MaxRecordPayload: 16384,
+		InterPacketDelayMin: 0,
+		InterPacketDelayMax: 3500,  // Firefox similar to Chrome
 	}
 
 	// ================================================================
@@ -201,15 +239,25 @@ var (
 			{MinSize: 26, MaxSize: 50},    // WINDOW_UPDATE
 			{MinSize: 300, MaxSize: 900},  // 首次推荐请求(带设备信息)
 			{MinSize: 26, MaxSize: 80},    // ACK
+			{MinSize: 80, MaxSize: 400},   // 第二个请求(广告SDK)
+			{MinSize: 26, MaxSize: 50},    // WINDOW_UPDATE
+			{MinSize: 100, MaxSize: 500},  // 用户行为上报
+			{MinSize: 26, MaxSize: 60},    // ACK
 		},
 		S2CInitial: []InitialPacket{
 			{MinSize: 80, MaxSize: 200},      // SETTINGS
 			{MinSize: 26, MaxSize: 50},       // WINDOW_UPDATE
 			{MinSize: 800, MaxSize: 3000},    // 推荐列表 JSON
 			{MinSize: 6000, MaxSize: 16384},  // 首个视频片段预加载
+			{MinSize: 26, MaxSize: 80},       // WINDOW_UPDATE
+			{MinSize: 400, MaxSize: 2000},    // 广告配置 JSON
+			{MinSize: 4000, MaxSize: 14000},  // 第二个视频预缓冲
+			{MinSize: 26, MaxSize: 50},       // ACK
 		},
 		MinRecordPayload: 26,
 		MaxRecordPayload: 16384,
+		InterPacketDelayMin: 200,   // 抖音APP持续推流，包间隔稳定
+		InterPacketDelayMax: 2000,  // 0.2-2ms steady streaming
 	}
 
 	// BilibiliProfile — B站视频/直播流量
@@ -236,15 +284,25 @@ var (
 			{MinSize: 26, MaxSize: 50},
 			{MinSize: 250, MaxSize: 700},   // 视频播放请求(带 bvid 等)
 			{MinSize: 26, MaxSize: 100},
+			{MinSize: 80, MaxSize: 350},    // 弹幕请求
+			{MinSize: 26, MaxSize: 50},
+			{MinSize: 100, MaxSize: 400},   // 推荐列表请求
+			{MinSize: 26, MaxSize: 60},
 		},
 		S2CInitial: []InitialPacket{
 			{MinSize: 80, MaxSize: 200},
 			{MinSize: 26, MaxSize: 50},
 			{MinSize: 400, MaxSize: 2000},     // 播放信息 JSON
 			{MinSize: 10000, MaxSize: 16384},  // 首个视频分片
+			{MinSize: 26, MaxSize: 80},
+			{MinSize: 200, MaxSize: 1500},     // 弹幕数据
+			{MinSize: 8000, MaxSize: 16384},   // 第二个视频分片
+			{MinSize: 26, MaxSize: 50},
 		},
 		MinRecordPayload: 26,
 		MaxRecordPayload: 16384,
+		InterPacketDelayMin: 100,   // B站长视频持续流
+		InterPacketDelayMax: 1500,  // 0.1-1.5ms very steady
 	}
 
 	// AppleMusicProfile — Apple Music 音乐流媒体
@@ -272,15 +330,25 @@ var (
 			{MinSize: 26, MaxSize: 50},      // WINDOW_UPDATE
 			{MinSize: 200, MaxSize: 600},    // 首次播放请求(带认证信息)
 			{MinSize: 26, MaxSize: 80},      // ACK
+			{MinSize: 80, MaxSize: 300},     // 歌词请求
+			{MinSize: 26, MaxSize: 50},      // WINDOW_UPDATE
+			{MinSize: 100, MaxSize: 400},    // 播放列表请求
+			{MinSize: 26, MaxSize: 60},      // ACK
 		},
 		S2CInitial: []InitialPacket{
 			{MinSize: 80, MaxSize: 200},
 			{MinSize: 26, MaxSize: 50},
 			{MinSize: 300, MaxSize: 1200},     // 播放列表/歌曲信息 JSON
 			{MinSize: 2000, MaxSize: 8000},    // 首个音频分片预加载
+			{MinSize: 26, MaxSize: 80},
+			{MinSize: 150, MaxSize: 600},      // 歌词数据
+			{MinSize: 1500, MaxSize: 6000},    // 第二个音频分片
+			{MinSize: 26, MaxSize: 50},
 		},
 		MinRecordPayload: 26,
 		MaxRecordPayload: 16384,
+		InterPacketDelayMin: 300,   // 音频码率低，包间隔大些
+		InterPacketDelayMax: 5000,  // 0.3-5ms (音频帧间隔自然较大)
 	}
 
 	// TaobaoProfile — 淘宝/天猫购物浏览
@@ -307,15 +375,25 @@ var (
 			{MinSize: 26, MaxSize: 50},
 			{MinSize: 300, MaxSize: 800},   // 首页请求(带用户态)
 			{MinSize: 26, MaxSize: 100},
+			{MinSize: 100, MaxSize: 500},   // 商品搜索请求
+			{MinSize: 26, MaxSize: 50},
+			{MinSize: 150, MaxSize: 600},   // 筛选/分类请求
+			{MinSize: 26, MaxSize: 80},
 		},
 		S2CInitial: []InitialPacket{
 			{MinSize: 80, MaxSize: 200},
 			{MinSize: 26, MaxSize: 50},
 			{MinSize: 1000, MaxSize: 4000},   // 首页推荐 JSON
 			{MinSize: 3000, MaxSize: 12000},  // 首屏商品图片
+			{MinSize: 26, MaxSize: 80},
+			{MinSize: 500, MaxSize: 3000},    // 搜索结果 JSON
+			{MinSize: 2000, MaxSize: 10000},  // 商品图片批量
+			{MinSize: 26, MaxSize: 50},
 		},
 		MinRecordPayload: 26,
 		MaxRecordPayload: 16384,
+		InterPacketDelayMin: 0,     // 淘宝页面突发加载
+		InterPacketDelayMax: 4000,  // 0-4ms bursty like browsing
 	}
 
 	// ICloudSyncProfile — iCloud 同步(照片/备份/文档)
@@ -343,15 +421,25 @@ var (
 			{MinSize: 30, MaxSize: 60},
 			{MinSize: 300, MaxSize: 1200},    // Apple ID 认证 + 同步状态
 			{MinSize: 100, MaxSize: 500},
+			{MinSize: 200, MaxSize: 800},     // 文件列表查询
+			{MinSize: 30, MaxSize: 60},
+			{MinSize: 500, MaxSize: 4000},    // 首个文件分片上传
+			{MinSize: 30, MaxSize: 80},
 		},
 		S2CInitial: []InitialPacket{
 			{MinSize: 80, MaxSize: 250},
 			{MinSize: 30, MaxSize: 60},
 			{MinSize: 200, MaxSize: 800},
 			{MinSize: 8000, MaxSize: 16384},  // 立即开始传输
+			{MinSize: 30, MaxSize: 80},
+			{MinSize: 300, MaxSize: 1500},    // 文件元数据
+			{MinSize: 6000, MaxSize: 16384},  // 第二个文件分片
+			{MinSize: 30, MaxSize: 60},
 		},
 		MinRecordPayload: 30,
 		MaxRecordPayload: 16384,
+		InterPacketDelayMin: 0,     // iCloud全速传输
+		InterPacketDelayMax: 500,   // 0-0.5ms minimal delay (bulk transfer)
 	}
 
 	// TencentVideoProfile — 腾讯视频/爱奇艺长视频
@@ -378,15 +466,25 @@ var (
 			{MinSize: 26, MaxSize: 40},
 			{MinSize: 150, MaxSize: 500},   // 播放请求
 			{MinSize: 26, MaxSize: 60},
+			{MinSize: 80, MaxSize: 300},    // DRM 许可请求
+			{MinSize: 26, MaxSize: 40},
+			{MinSize: 60, MaxSize: 200},    // 清晰度协商
+			{MinSize: 26, MaxSize: 50},
 		},
 		S2CInitial: []InitialPacket{
 			{MinSize: 80, MaxSize: 180},
 			{MinSize: 26, MaxSize: 40},
 			{MinSize: 500, MaxSize: 2000},     // 播放配置
 			{MinSize: 12000, MaxSize: 16384},  // 首帧视频数据
+			{MinSize: 26, MaxSize: 60},
+			{MinSize: 300, MaxSize: 1500},     // 字幕/DRM响应
+			{MinSize: 10000, MaxSize: 16384},  // 视频缓冲分片
+			{MinSize: 26, MaxSize: 40},
 		},
 		MinRecordPayload: 26,
 		MaxRecordPayload: 16384,
+		InterPacketDelayMin: 50,    // 腾讯视频持续满流
+		InterPacketDelayMax: 800,   // 0.05-0.8ms near-continuous
 	}
 
 	// profileRegistry for lookup by name
